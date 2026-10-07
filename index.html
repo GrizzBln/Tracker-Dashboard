@@ -1,0 +1,597 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PAKET//TRACKER</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="config.js"></script>
+<style>
+  :root{
+    --bg:#000; --g:#00ff41; --g2:#00c732; --g3:#008f11; --dim:#0a3d14; --panel:rgba(0,12,3,.88);
+    --warn:#ffd400; --err:#ff3b3b;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--g);font-family:"Courier New",Consolas,monospace}
+  #rain{position:fixed;inset:0;z-index:0;opacity:.13;pointer-events:none}
+  .wrap{position:relative;z-index:1;max-width:1500px;margin:0 auto;padding:18px}
+  a{color:var(--g)}
+  h1{margin:0;font-size:28px;letter-spacing:4px;text-shadow:0 0 8px var(--g)}
+  h1 span{animation:blink 1s steps(1) infinite}
+  @keyframes blink{50%{opacity:0}}
+  header{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:12px;margin-bottom:14px}
+  .mode{border:1px solid var(--g3);padding:4px 10px;font-size:12px}
+  .mode.live{border-color:var(--g);box-shadow:0 0 8px var(--g)}
+  .panel{background:var(--panel);border:1px solid var(--g3);padding:12px;margin-bottom:14px;box-shadow:0 0 12px rgba(0,255,65,.08)}
+  input,select,button{background:#000;color:var(--g);border:1px solid var(--g3);font-family:inherit;font-size:14px;padding:8px 10px}
+  input::placeholder{color:var(--g3)}
+  input:focus,select:focus{outline:none;border-color:var(--g);box-shadow:0 0 6px var(--g)}
+  button{cursor:pointer;transition:.15s}
+  button:hover{background:var(--g);color:#000}
+  .row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+  .row .grow{flex:1;min-width:200px}
+  .stats{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+  .stat{border:1px dashed var(--g3);padding:6px 10px;font-size:13px;cursor:pointer}
+  .stat b{font-size:16px}
+  .stat.active{border-style:solid;border-color:var(--g);box-shadow:0 0 6px var(--g)}
+  #map{height:420px;border:1px solid var(--g3)}
+  .leaflet-container{background:#000}
+  .leaflet-tile-pane{filter:sepia(1) hue-rotate(70deg) saturate(4) brightness(.75) contrast(1.1)}
+  .leaflet-popup-content-wrapper,.leaflet-popup-tip{background:#000;color:var(--g);border:1px solid var(--g);font-family:inherit}
+  .leaflet-control-attribution{background:rgba(0,0,0,.7)!important;color:var(--g3)!important}
+  .leaflet-control-attribution a{color:var(--g2)!important}
+  .leaflet-bar a{background:#000;color:var(--g);border-color:var(--g3)}
+  .pin{width:16px;height:16px;border-radius:50%;background:var(--g);box-shadow:0 0 10px var(--g),0 0 20px var(--g);border:2px solid #000}
+  .pin.live{animation:pulse 1.4s infinite}
+  .pin.warn{background:var(--warn);box-shadow:0 0 10px var(--warn)}
+  .pin.err{background:var(--err);box-shadow:0 0 10px var(--err)}
+  @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(0,255,65,.8)}100%{box-shadow:0 0 0 18px rgba(0,255,65,0)}}
+  .group-title{margin:22px 0 10px;font-size:15px;letter-spacing:3px;border-bottom:1px solid var(--g3);padding-bottom:4px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:14px}
+  .tile{background:var(--panel);border:1px solid var(--g3);padding:14px;position:relative;transition:.2s;display:flex;flex-direction:column;gap:8px}
+  .tile:hover{border-color:var(--g);box-shadow:0 0 14px rgba(0,255,65,.35)}
+  .tile.warn{border-color:var(--warn)} .tile.err{border-color:var(--err)}
+  .tile .top{display:flex;justify-content:space-between;gap:8px;align-items:flex-start}
+  .badge{border:1px solid var(--g);padding:2px 8px;font-size:12px;font-weight:bold;letter-spacing:1px;white-space:nowrap}
+  .label{font-size:17px;font-weight:bold;word-break:break-word}
+  .num{font-size:12px;color:var(--g2);cursor:pointer;word-break:break-all}
+  .num:hover{text-decoration:underline}
+  .status{font-size:15px;font-weight:bold}
+  .status.warn{color:var(--warn)} .status.err{color:var(--err)}
+  .muted{color:var(--g3);font-size:12px}
+  .kv{display:grid;grid-template-columns:110px 1fr;gap:2px 8px;font-size:13px}
+  .kv div:nth-child(odd){color:var(--g3)}
+  .progress{display:flex;gap:4px}
+  .progress i{flex:1;height:6px;background:var(--dim)}
+  .progress i.on{background:var(--g);box-shadow:0 0 6px var(--g)}
+  .progress.warn i.on{background:var(--warn);box-shadow:0 0 6px var(--warn)}
+  .steps{display:flex;justify-content:space-between;font-size:10px;color:var(--g3)}
+  .actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:auto}
+  .actions button,.actions a{font-size:12px;padding:5px 8px;text-decoration:none;border:1px solid var(--g3);background:#000;color:var(--g)}
+  .actions a:hover{background:var(--g);color:#000}
+  .spin{display:inline-block;animation:spin 1s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .empty{text-align:center;padding:40px;color:var(--g3)}
+  .modal{position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:1000;display:none;align-items:flex-start;justify-content:center;overflow:auto;padding:30px 12px}
+  .modal.open{display:flex}
+  .modal .box{background:#000;border:1px solid var(--g);box-shadow:0 0 30px rgba(0,255,65,.4);width:100%;max-width:1000px;padding:18px;position:relative}
+  .modal .close{position:absolute;top:10px;right:10px}
+  #dmap{height:320px;border:1px solid var(--g3);margin:12px 0}
+  .timeline{border-left:2px solid var(--g3);margin-left:8px;padding-left:16px}
+  .ev{position:relative;margin-bottom:12px}
+  .ev:before{content:"";position:absolute;left:-23px;top:4px;width:10px;height:10px;border-radius:50%;background:var(--g3)}
+  .ev:first-child:before{background:var(--g);box-shadow:0 0 8px var(--g)}
+  .ev .t{font-size:12px;color:var(--g2)}
+  details{margin-top:12px}
+  summary{cursor:pointer}
+  pre{white-space:pre-wrap;word-break:break-all;font-size:11px;color:var(--g2);max-height:350px;overflow:auto;border:1px solid var(--dim);padding:8px}
+  .toast{position:fixed;bottom:18px;right:18px;z-index:2000;display:flex;flex-direction:column;gap:8px}
+  .toast div{background:#000;border:1px solid var(--g);padding:10px 14px;box-shadow:0 0 12px var(--g);max-width:340px}
+  .two{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media(max-width:800px){.two{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<canvas id="rain"></canvas>
+<div class="wrap">
+
+  <header>
+    <h1>&gt; PAKET//TRACKER<span>_</span></h1>
+    <div class="row">
+      <span id="mode" class="mode">MODUS: …</span>
+      <button id="settingsBtn" style="font-size:12px;padding:4px 10px">[ ⚙ API ]</button>
+      <span id="clock" class="muted"></span>
+    </div>
+  </header>
+
+  <div class="panel">
+    <form id="addForm" class="row">
+      <input id="inNum" class="grow" placeholder="Sendungsnummer eingeben …" required>
+      <select id="inCarrier"></select>
+      <input id="inLabel" class="grow" placeholder="Bezeichnung (z. B. Bürostuhl, Geschenk Mama)">
+      <button type="submit">[ + HINZUFÜGEN ]</button>
+    </form>
+    <div class="muted" id="detectHint" style="margin-top:6px">&nbsp;</div>
+  </div>
+
+  <div class="panel">
+    <div class="row">
+      <input id="search" class="grow" placeholder="Suchen (Nummer, Bezeichnung, Ort, Status) …">
+      <select id="sort">
+        <option value="eta">Sortierung: Ankunft</option>
+        <option value="update">Sortierung: Letztes Update</option>
+        <option value="carrier">Sortierung: Versender</option>
+        <option value="added">Sortierung: Hinzugefügt</option>
+        <option value="label">Sortierung: Bezeichnung</option>
+      </select>
+      <select id="carrierFilter"><option value="">Alle Versender</option></select>
+      <label class="muted"><input type="checkbox" id="hideDelivered"> Zugestellte ausblenden</label>
+      <select id="interval">
+        <option value="0">Live-Update: aus</option>
+        <option value="1">alle 1 Min</option>
+        <option value="5">alle 5 Min</option>
+        <option value="15" selected>alle 15 Min</option>
+        <option value="60">alle 60 Min</option>
+      </select>
+      <button id="refreshAll">[ ⟳ ALLE AKTUALISIEREN ]</button>
+    </div>
+    <div class="stats" id="stats"></div>
+  </div>
+
+  <div class="panel">
+    <div class="row" style="justify-content:space-between;margin-bottom:8px">
+      <b>&gt; KARTE – LETZTER BEKANNTER STANDORT</b>
+      <button id="fitAll">[ ALLE ANZEIGEN ]</button>
+    </div>
+    <div id="map"></div>
+  </div>
+
+  <div id="tiles"></div>
+</div>
+
+<div class="modal" id="modal">
+  <div class="box">
+    <button class="close" id="closeModal">[ X ]</button>
+    <div id="modalBody"></div>
+    <div id="dmap"></div>
+    <div id="modalBody2"></div>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+/* =====================================================================
+   0) API-ENDPUNKT
+   Reihenfolge: Einstellung im Browser (⚙ API) > config.js > gleiche Domain (lokaler server.js)
+   Auf GitHub Pages ohne Proxy-URL läuft automatisch der DEMO-Modus.
+   ===================================================================== */
+const onGithubPages = location.hostname.endsWith("github.io") || location.protocol === "file:";
+function apiBase(){
+  const v = localStorage.getItem("pakettracker_api") ?? (window.TRACKER_CONFIG?.API_BASE || "");
+  if (v) return v.replace(/\/+$/,"");
+  return onGithubPages ? null : "";   // "" = gleiche Domain, null = kein Backend
+}
+
+/* =====================================================================
+   1) VERSENDER
+   ===================================================================== */
+const CARRIERS = {
+  dhl:    { name:"DHL",       url:n=>`https://www.dhl.de/de/privatkunden/pakete-empfangen/verfolgen.html?piececode=${n}` },
+  hermes: { name:"Hermes",    url:n=>`https://www.myhermes.de/empfangen/sendungsverfolgung/sendungsinformation#${n}` },
+  dpd:    { name:"DPD",       url:n=>`https://tracking.dpd.de/status/de_DE/parcel/${n}` },
+  amazon: { name:"Amazon",    url:n=>`https://track.amazon.de/tracking/${n}` },
+  fedex:  { name:"FedEx",     url:n=>`https://www.fedex.com/fedextrack/?trknbr=${n}` },
+  ups:    { name:"UPS",       url:n=>`https://www.ups.com/track?loc=de_DE&tracknum=${n}` },
+  gls:    { name:"GLS",       url:n=>`https://gls-group.com/DE/de/paketverfolgung?match=${n}` },
+  post:   { name:"Dt. Post",  url:n=>`https://www.deutschepost.de/de/s/sendungsverfolgung.html?piececode=${n}` },
+  other:  { name:"Sonstige",  url:n=>`https://parcelsapp.com/de/tracking/${n}` },
+};
+function detectCarrier(raw){
+  const n = raw.replace(/\s/g,"").toUpperCase();
+  if (/^TBA\d{9,15}$/.test(n)) return "amazon";
+  if (/^1Z[0-9A-Z]{16}$/.test(n)) return "ups";
+  if (/^(JJD|JVGL|00340)\d+/.test(n) || /^\d{20}$/.test(n)) return "dhl";
+  if (/^[A-Z]{2}\d{9}DE$/.test(n)) return "post";
+  if (/^H\d{19}$/.test(n) || /^\d{16}$/.test(n)) return "hermes";
+  if (/^\d{14}$/.test(n)) return "dpd";
+  if (/^\d{15}$/.test(n)) return "fedex";
+  if (/^\d{12}$/.test(n)) return "dhl";
+  if (/^\d{11}$/.test(n)) return "gls";
+  return "other";
+}
+function mapCourierCode(c=""){
+  c = c.toLowerCase();
+  for (const k of ["dhl","hermes","dpd","amazon","fedex","ups","gls"]) if (c.includes(k)) return k;
+  if (c.includes("deutsche-post")) return "post";
+  return null;
+}
+
+/* =====================================================================
+   2) STATUS-LOGIK
+   ===================================================================== */
+const MS = {
+  pending:              { de:"Ausstehend",                    step:0, group:"announced", cls:"" },
+  info_received:        { de:"Daten übermittelt",             step:1, group:"announced", cls:"" },
+  in_transit:           { de:"Unterwegs",                     step:2, group:"transit",   cls:"" },
+  out_for_delivery:     { de:"In Zustellung",                 step:3, group:"today",     cls:"" },
+  available_for_pickup: { de:"Abholbereit",                   step:3, group:"today",     cls:"warn" },
+  failed_attempt:       { de:"Zustellversuch fehlgeschlagen", step:3, group:"alert",     cls:"warn" },
+  exception:            { de:"Problem / Ausnahme",            step:2, group:"alert",     cls:"err" },
+  delivered:            { de:"Zugestellt",                    step:4, group:"done",      cls:"" },
+};
+const GROUPS = [
+  { id:"alert",     title:"⚠ ACHTUNG ERFORDERLICH" },
+  { id:"today",     title:"► HEUTE / ABHOLBEREIT" },
+  { id:"transit",   title:"► UNTERWEGS" },
+  { id:"announced", title:"► ANGEKÜNDIGT" },
+  { id:"done",      title:"✔ ZUGESTELLT" },
+];
+const ms = s => MS[s?.data?.milestone] || MS.pending;
+
+function etaOf(s){
+  const d = s.data; if (!d) return null;
+  if (d.milestone === "delivered") return { date:new Date(d.lastUpdate), est:false, done:true };
+  if (d.eta) return { date:new Date(d.eta), est:false };
+  const base = d.lastUpdate ? new Date(d.lastUpdate) : new Date();
+  const add = { out_for_delivery:0, available_for_pickup:0, in_transit:1, info_received:2, pending:3, failed_attempt:1, exception:3 }[d.milestone] ?? 2;
+  const e = new Date(Math.max(base, Date.now())); e.setDate(e.getDate()+add); e.setHours(18,0,0,0);
+  return { date:e, est:true };
+}
+
+/* =====================================================================
+   3) SPEICHER & HILFSFUNKTIONEN
+   ===================================================================== */
+const LS = "pakettracker_v1", LSGEO = "pakettracker_geo";
+let shipments = JSON.parse(localStorage.getItem(LS) || "[]");
+let geoCache  = JSON.parse(localStorage.getItem(LSGEO) || "{}");
+let MODE = "demo", statusFilter = "", timer = null;
+const save = () => localStorage.setItem(LS, JSON.stringify(shipments));
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const fmt = d => d ? new Date(d).toLocaleString("de-DE",{weekday:"short",day:"2-digit",month:"2-digit",year:"numeric",hour:"2-digit",minute:"2-digit"}) : "–";
+const fmtDay = d => d ? new Date(d).toLocaleDateString("de-DE",{weekday:"long",day:"2-digit",month:"2-digit"}) : "–";
+function ago(d){ if(!d) return "–"; const m=Math.round((Date.now()-new Date(d))/60000);
+  if(m<1) return "gerade eben"; if(m<60) return `vor ${m} Min`; const h=Math.round(m/60); if(h<24) return `vor ${h} Std`; return `vor ${Math.round(h/24)} Tg`; }
+function toast(msg){ const t=document.createElement("div"); t.textContent="> "+msg; document.getElementById("toast").appendChild(t); setTimeout(()=>t.remove(),6000); }
+const uid = () => (crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36)+Math.random().toString(36).slice(2));
+
+/* =====================================================================
+   4) DATENABRUF
+   ===================================================================== */
+async function initMode(){
+  const base = apiBase();
+  MODE = "demo";
+  if (base !== null){
+    try{ const r = await fetch(base + "/api/config"); MODE = (await r.json()).mode || "demo"; }
+    catch { if (base) toast("API-Proxy nicht erreichbar – Demo-Modus aktiv."); }
+  }
+  const el = document.getElementById("mode");
+  el.textContent = MODE === "live" ? "● LIVE (Ship24)" : "○ DEMO-MODUS";
+  el.classList.toggle("live", MODE === "live");
+}
+
+async function fetchTracking(s){
+  if (MODE === "demo") return demoTracking(s);
+  const r = await fetch(apiBase() + "/api/track",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({trackingNumber:s.number})});
+  const j = await r.json();
+  if (!r.ok) throw new Error(j.error || "Abruf fehlgeschlagen");
+  await geocodeEvents(j.events);
+  return j;
+}
+
+async function geocodeEvents(events){
+  for (const e of events){
+    if (e.lat || !e.location) continue;
+    const k = e.location.toLowerCase();
+    if (!(k in geoCache)){
+      try{ geoCache[k] = await (await fetch(apiBase() + "/api/geocode?q="+encodeURIComponent(e.location))).json(); }
+      catch{ geoCache[k] = null; }
+      localStorage.setItem(LSGEO, JSON.stringify(geoCache));
+    }
+    if (geoCache[k]) { e.lat = geoCache[k].lat; e.lon = geoCache[k].lon; }
+  }
+}
+
+async function refresh(s, silent){
+  s._loading = true; render();
+  try{
+    const before = s.data?.milestone;
+    s.data = await fetchTracking(s);
+    s.error = null;
+    if (s.carrierAuto){ const c = mapCourierCode(s.data.courier); if (c) s.carrier = c; }
+    if (before && before !== s.data.milestone) toast(`${s.label || s.number}: ${ms(s).de}`);
+  } catch(e){ s.error = e.message; if(!silent) toast(`Fehler bei ${s.number}: ${e.message}`); }
+  s.checkedAt = new Date().toISOString(); s._loading = false; save(); render();
+}
+// Zugestellte Sendungen im Live-Modus nicht mehr abfragen (schont das kostenlose Kontingent)
+async function refreshAll(){
+  for (const s of shipments){
+    if (MODE === "live" && s.data?.milestone === "delivered") continue;
+    await refresh(s, true);
+  }
+}
+
+function setLive(){
+  clearInterval(timer);
+  const min = +document.getElementById("interval").value;
+  localStorage.setItem("pakettracker_interval", min);
+  if (min > 0) timer = setInterval(refreshAll, min*60000);
+}
+
+/* ---------- DEMO-Simulation ---------- */
+const CITY = {
+  "Berlin":[52.52,13.405],"Hamburg":[53.551,9.994],"München":[48.137,11.575],"Köln":[50.938,6.96],
+  "Frankfurt am Main":[50.11,8.682],"Leipzig":[51.34,12.375],"Hannover":[52.375,9.732],"Kassel":[51.312,9.48],
+  "Bad Hersfeld":[50.868,9.707],"Ludwigsfelde":[52.30,13.26],"Paris":[49.009,2.548],"Magdeburg":[52.12,11.63],"Nürnberg":[49.45,11.08]
+};
+const DEMO_ROUTES = {
+  dhl:["Hamburg","Hannover","Magdeburg","Ludwigsfelde","Berlin"],
+  hermes:["München","Nürnberg","Leipzig","Berlin"],
+  amazon:["Bad Hersfeld","Kassel","Magdeburg","Berlin"],
+  dpd:["Köln","Hannover","Magdeburg","Berlin"],
+  fedex:["Paris","Köln","Leipzig","Berlin"],
+  other:["Frankfurt am Main","Leipzig","Berlin"],
+};
+function hash(str){ let h=0; for(const c of str) h=(h*31+c.charCodeAt(0))|0; return Math.abs(h); }
+function demoTracking(s){
+  const route = (DEMO_ROUTES[s.carrier] || DEMO_ROUTES.other).map(n=>({name:n,ll:CITY[n]}));
+  const start = new Date(s.addedAt).getTime() - (hash(s.number)%40)*3600e3;
+  const dur = 52*3600e3;
+  const p = Math.min(1,(Date.now()-start)/dur);
+  const forceErr = hash(s.number)%7===3 && p>0.5;
+  const segs = route.length-1, pos = p*segs, i = Math.min(Math.floor(pos),segs-1), f = pos-i;
+  const a=route[i].ll, b=route[i+1].ll, cur=[a[0]+(b[0]-a[0])*f, a[1]+(b[1]-a[1])*f];
+  const ev = (t,status,loc,milestone,ll)=>({time:new Date(t).toISOString(),status,location:loc,milestone,lat:ll?.[0],lon:ll?.[1]});
+  const events = [ev(start,"Sendungsdaten elektronisch übermittelt",route[0].name,"info_received",route[0].ll)];
+  route.forEach((r,k)=>{
+    const t = start + (k/segs)*dur*0.92;
+    if (t>Date.now() || k===0 && p<0.03) return;
+    events.push(ev(t+1800e3, k===0?"Sendung im Start-Paketzentrum bearbeitet":k===segs?"Sendung im Zustellbezirk angekommen":"Sendung im Paketzentrum umgeschlagen", r.name, "in_transit", r.ll));
+  });
+  let milestone = p<0.03?"info_received":"in_transit";
+  if (p>0.92){ milestone="out_for_delivery"; events.push(ev(start+dur*0.93,"Sendung wird heute zugestellt","Berlin","out_for_delivery",CITY.Berlin)); }
+  if (p>=1){ milestone="delivered"; events.push(ev(start+dur,"Sendung wurde zugestellt (Empfänger)","Berlin","delivered",CITY.Berlin)); }
+  if (forceErr && milestone!=="delivered"){ milestone="exception"; events.push(ev(Date.now()-3600e3,"Adressproblem – Klärung läuft",route[i].name,"exception",route[i].ll)); }
+  if (milestone==="in_transit" && p>=0.03) events.push(ev(Date.now()-600e3,"Sendung auf dem Transportweg (Live-Position)", `zw. ${route[i].name} und ${route[i+1].name}`,"in_transit",cur));
+  events.sort((x,y)=>new Date(y.time)-new Date(x.time));
+  return { trackingNumber:s.number, courier:s.carrier, milestone, statusText:events[0].status,
+    eta:new Date(start+dur).toISOString(), service:"Paket Standard (Demo)", origin:"DE", destination:"DE",
+    lastUpdate:events[0].time, events, raw:{hinweis:"Simulierte Demo-Daten",fortschritt:Math.round(p*100)+"%"} };
+}
+
+/* =====================================================================
+   5) KARTE
+   ===================================================================== */
+const TILE = "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png";
+const ATTR = '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/">CARTO</a>';
+const map = L.map("map",{zoomControl:true}).setView([51.2,10.4],6);
+L.tileLayer(TILE,{attribution:ATTR,maxZoom:18}).addTo(map);
+const layer = L.layerGroup().addTo(map);
+const lastPos = s => s.data?.events?.find(e=>e.lat!=null);
+const pinIcon = s => L.divIcon({className:"",html:`<div class="pin ${ms(s).cls} ${["in_transit","out_for_delivery"].includes(s.data?.milestone)?"live":""}"></div>`,iconSize:[16,16],iconAnchor:[8,8]});
+
+function drawMap(list){
+  layer.clearLayers();
+  list.forEach(s=>{
+    const p = lastPos(s); if(!p) return;
+    const route = s.data.events.filter(e=>e.lat!=null).map(e=>[e.lat,e.lon]).reverse();
+    if (route.length>1) L.polyline(route,{color:"#00ff41",weight:2,opacity:.45,dashArray:"4 6"}).addTo(layer);
+    L.marker([p.lat,p.lon],{icon:pinIcon(s)}).addTo(layer)
+      .bindPopup(`<b>${esc(CARRIERS[s.carrier]?.name)} · ${esc(s.label||s.number)}</b><br>${esc(ms(s).de)}<br>${esc(p.location)}<br><small>${fmt(p.time)}</small><br><a href="#" onclick="openDetail('${s.id}');return false">Details »</a>`);
+  });
+}
+function fitAll(){
+  const pts = shipments.map(lastPos).filter(Boolean).map(p=>[p.lat,p.lon]);
+  if (pts.length) map.fitBounds(pts,{padding:[40,40],maxZoom:10});
+}
+function focusOnMap(id){
+  const s = shipments.find(x=>x.id===id), p = s && lastPos(s);
+  if (!p) return toast("Kein Standort bekannt.");
+  document.getElementById("map").scrollIntoView({behavior:"smooth"});
+  map.flyTo([p.lat,p.lon],10);
+  layer.eachLayer(l=>{ if(l.getLatLng && l.getLatLng().lat===p.lat && l.getLatLng().lng===p.lon) l.openPopup(); });
+}
+
+/* =====================================================================
+   6) DARSTELLUNG
+   ===================================================================== */
+function filtered(){
+  const q = document.getElementById("search").value.toLowerCase();
+  const cf = document.getElementById("carrierFilter").value;
+  const hide = document.getElementById("hideDelivered").checked;
+  return shipments.filter(s=>{
+    if (cf && s.carrier!==cf) return false;
+    if (hide && s.data?.milestone==="delivered") return false;
+    if (statusFilter && ms(s).group!==statusFilter) return false;
+    if (!q) return true;
+    return [s.number,s.label,CARRIERS[s.carrier]?.name,ms(s).de,s.data?.statusText,...(s.data?.events||[]).map(e=>e.location)].join(" ").toLowerCase().includes(q);
+  });
+}
+function sorted(list){
+  const k = document.getElementById("sort").value;
+  const by = {
+    eta:    s=>etaOf(s)?.date?.getTime() ?? 9e15,
+    update: s=>-(new Date(s.data?.lastUpdate||0).getTime()),
+    carrier:s=>CARRIERS[s.carrier]?.name||"",
+    added:  s=>-(new Date(s.addedAt).getTime()),
+    label:  s=>(s.label||s.number).toLowerCase(),
+  }[k];
+  return [...list].sort((a,b)=>{ const x=by(a),y=by(b); return x>y?1:x<y?-1:0; });
+}
+
+function renderStats(){
+  const c = {}; shipments.forEach(s=>c[ms(s).group]=(c[ms(s).group]||0)+1);
+  document.getElementById("stats").innerHTML =
+    `<div class="stat ${!statusFilter?"active":""}" data-g="">GESAMT <b>${shipments.length}</b></div>` +
+    GROUPS.map(g=>`<div class="stat ${statusFilter===g.id?"active":""}" data-g="${g.id}">${g.title.replace(/^[^A-ZÄÖÜ]+/,"")} <b>${c[g.id]||0}</b></div>`).join("");
+  document.querySelectorAll(".stat").forEach(el=>el.onclick=()=>{ statusFilter=el.dataset.g; render(); });
+}
+
+function tile(s){
+  const m = ms(s), d = s.data, eta = etaOf(s), last = d?.events?.[0], C = CARRIERS[s.carrier]||CARRIERS.other;
+  const steps = [1,2,3,4].map(i=>`<i class="${m.step>=i?"on":""}"></i>`).join("");
+  return `<div class="tile ${m.cls}">
+    <div class="top">
+      <div><div class="label">${esc(s.label||"Sendung")}</div>
+      <div class="num" title="Kopieren" onclick="navigator.clipboard.writeText('${esc(s.number)}');toast('Nummer kopiert')">#${esc(s.number)}</div></div>
+      <span class="badge">${esc(C.name)}</span>
+    </div>
+    <div class="status ${m.cls}">${s._loading?'<span class="spin">◐</span> ':""}${d?esc(m.de):"Noch nicht abgerufen"}</div>
+    <div class="progress ${m.cls}">${steps}</div>
+    <div class="steps"><span>Daten</span><span>Unterwegs</span><span>Zustellung</span><span>Zugestellt</span></div>
+    <div class="kv">
+      <div>${eta?.done?"Zugestellt":"Ankunft"}</div><div><b>${eta?fmtDay(eta.date):"–"}</b>${eta?.est?' <span class="muted">(geschätzt)</span>':""}</div>
+      <div>Letztes Event</div><div>${esc(last?.status||"–")}</div>
+      <div>Ort</div><div>${esc(last?.location||"–")}</div>
+      <div>Zeitpunkt</div><div>${last?fmt(last.time)+` <span class="muted">(${ago(last.time)})</span>`:"–"}</div>
+      <div>Geprüft</div><div class="muted">${ago(s.checkedAt)}</div>
+    </div>
+    ${s.error?`<div class="status err" style="font-size:12px">! ${esc(s.error)}</div>`:""}
+    <div class="actions">
+      <button onclick="openDetail('${s.id}')">[ DETAILS ]</button>
+      <button onclick="focusOnMap('${s.id}')">[ KARTE ]</button>
+      <a href="${C.url(encodeURIComponent(s.number))}" target="_blank" rel="noopener">[ ${esc(C.name)} ↗ ]</a>
+      <button onclick="refreshOne('${s.id}')">[ ⟳ ]</button>
+      <button onclick="removeOne('${s.id}')">[ ✕ ]</button>
+    </div>
+  </div>`;
+}
+
+function render(){
+  renderStats();
+  const list = sorted(filtered());
+  const box = document.getElementById("tiles");
+  if (!shipments.length){ box.innerHTML = `<div class="empty">&gt; Keine Sendungen. Oben eine Sendungsnummer eingeben._</div>`; drawMap([]); return; }
+  box.innerHTML = GROUPS.map(g=>{
+    const items = list.filter(s=>ms(s).group===g.id);
+    return items.length ? `<div class="group-title">${g.title} [${items.length}]</div><div class="grid">${items.map(tile).join("")}</div>` : "";
+  }).join("") || `<div class="empty">&gt; Keine Treffer für den Filter.</div>`;
+  drawMap(list);
+  const cf = document.getElementById("carrierFilter"), cur = cf.value;
+  const used = [...new Set(shipments.map(s=>s.carrier))];
+  cf.innerHTML = `<option value="">Alle Versender</option>` + used.map(c=>`<option value="${c}">${CARRIERS[c]?.name||c}</option>`).join("");
+  cf.value = used.includes(cur) ? cur : "";
+}
+
+/* =====================================================================
+   7) DETAILANSICHT
+   ===================================================================== */
+let dmap = null;
+function openDetail(id){
+  const s = shipments.find(x=>x.id===id); if(!s) return;
+  const d = s.data || {}, C = CARRIERS[s.carrier]||CARRIERS.other, eta = etaOf(s);
+  document.getElementById("modalBody").innerHTML = `
+    <h2 style="margin-top:0">&gt; ${esc(s.label||"Sendung")} <span class="badge">${esc(C.name)}</span></h2>
+    <div class="two">
+      <div class="kv">
+        <div>Nummer</div><div>${esc(s.number)}</div>
+        <div>Status</div><div class="status ${ms(s).cls}">${esc(ms(s).de)}</div>
+        <div>Statustext</div><div>${esc(d.statusText||"–")}</div>
+        <div>Ankunft</div><div>${eta?fmt(eta.date):"–"}${eta?.est?" (geschätzt)":""}</div>
+        <div>Service</div><div>${esc(d.service||"–")}</div>
+        <div>Unterschrift</div><div>${esc(d.signedBy||"–")}</div>
+      </div>
+      <div class="kv">
+        <div>Herkunft</div><div>${esc(d.origin||"–")}</div>
+        <div>Ziel</div><div>${esc(d.destination||"–")}</div>
+        <div>Letztes Update</div><div>${fmt(d.lastUpdate)}</div>
+        <div>Geprüft</div><div>${fmt(s.checkedAt)}</div>
+        <div>Hinzugefügt</div><div>${fmt(s.addedAt)}</div>
+        <div>Tracking-Seite</div><div><a href="${C.url(encodeURIComponent(s.number))}" target="_blank" rel="noopener">${esc(C.name)} öffnen ↗</a></div>
+      </div>
+    </div>`;
+  const evs = d.events||[];
+  document.getElementById("modalBody2").innerHTML = `
+    <h3>&gt; SENDUNGSVERLAUF (${evs.length})</h3>
+    <div class="timeline">${evs.map(e=>`<div class="ev"><div class="t">${fmt(e.time)}${e.location?" · "+esc(e.location):""}</div><div>${esc(e.status)}</div></div>`).join("") || '<div class="muted">Keine Ereignisse vorhanden.</div>'}</div>
+    <details><summary>&gt; ALLE ROHDATEN ANZEIGEN</summary><pre>${esc(JSON.stringify(d.raw ?? d,null,2))}</pre></details>`;
+  document.getElementById("modal").classList.add("open");
+  setTimeout(()=>{
+    if (dmap) dmap.remove();
+    dmap = L.map("dmap").setView([51.2,10.4],6);
+    L.tileLayer(TILE,{attribution:ATTR}).addTo(dmap);
+    const pts = evs.filter(e=>e.lat!=null).reverse();
+    if (pts.length){
+      L.polyline(pts.map(e=>[e.lat,e.lon]),{color:"#00ff41",weight:3}).addTo(dmap);
+      pts.forEach((e,i)=>L.circleMarker([e.lat,e.lon],{radius:i===pts.length-1?9:5,color:"#00ff41",fillOpacity:i===pts.length-1?1:.4})
+        .addTo(dmap).bindPopup(`${esc(e.status)}<br>${esc(e.location)}<br><small>${fmt(e.time)}</small>`));
+      dmap.fitBounds(pts.map(e=>[e.lat,e.lon]),{padding:[30,30],maxZoom:11});
+    }
+  },50);
+}
+document.getElementById("closeModal").onclick = ()=>document.getElementById("modal").classList.remove("open");
+document.getElementById("modal").onclick = e=>{ if(e.target.id==="modal") e.currentTarget.classList.remove("open"); };
+document.addEventListener("keydown",e=>{ if(e.key==="Escape") document.getElementById("modal").classList.remove("open"); });
+
+/* =====================================================================
+   8) AKTIONEN
+   ===================================================================== */
+const sel = document.getElementById("inCarrier");
+sel.innerHTML = `<option value="auto">Versender: automatisch</option>` + Object.entries(CARRIERS).map(([k,c])=>`<option value="${k}">${c.name}</option>`).join("");
+document.getElementById("inNum").addEventListener("input",e=>{
+  const v=e.target.value.trim();
+  document.getElementById("detectHint").textContent = v ? `> Erkannt: ${CARRIERS[detectCarrier(v)].name} (bei Bedarf manuell ändern)` : "\u00a0";
+});
+document.getElementById("addForm").onsubmit = e=>{
+  e.preventDefault();
+  const number = document.getElementById("inNum").value.replace(/\s/g,"").toUpperCase();
+  if (shipments.some(s=>s.number===number)) return toast("Sendung ist bereits in der Liste.");
+  const auto = sel.value==="auto";
+  const s = { id:uid(), number, carrier:auto?detectCarrier(number):sel.value, carrierAuto:auto,
+              label:document.getElementById("inLabel").value.trim(), addedAt:new Date().toISOString() };
+  shipments.unshift(s); save(); e.target.reset(); document.getElementById("detectHint").innerHTML="&nbsp;";
+  refresh(s);
+};
+document.getElementById("settingsBtn").onclick = async ()=>{
+  const cur = localStorage.getItem("pakettracker_api") ?? (window.TRACKER_CONFIG?.API_BASE || "");
+  const v = prompt("URL deines API-Proxys (z. B. https://paket-tracker.DEINNAME.workers.dev)\nLeer lassen = Demo-Modus:", cur);
+  if (v === null) return;
+  localStorage.setItem("pakettracker_api", v.trim());
+  await initMode(); refreshAll();
+};
+window.refreshOne = id=>{ const s=shipments.find(x=>x.id===id); if(s) refresh(s); };
+window.removeOne  = id=>{ if(!confirm("Sendung entfernen?")) return; shipments=shipments.filter(x=>x.id!==id); save(); render(); };
+window.openDetail = openDetail; window.focusOnMap = focusOnMap; window.toast = toast;
+["search","sort","carrierFilter","hideDelivered"].forEach(id=>document.getElementById(id).addEventListener("input",render));
+document.getElementById("refreshAll").onclick = refreshAll;
+document.getElementById("fitAll").onclick = fitAll;
+document.getElementById("interval").onchange = setLive;
+setInterval(()=>document.getElementById("clock").textContent = new Date().toLocaleString("de-DE"),1000);
+
+/* =====================================================================
+   9) MATRIX-REGEN
+   ===================================================================== */
+(()=>{
+  const c=document.getElementById("rain"), x=c.getContext("2d");
+  const chars="アイウエオカキクケコサシスセソタチツテトナニヌネノ0123456789ABCDEF<>/#*".split("");
+  let drops; const fs=16;
+  const size=()=>{ c.width=innerWidth; c.height=innerHeight; drops=Array(Math.floor(c.width/fs)).fill(0).map(()=>Math.random()*-50); };
+  size(); addEventListener("resize",size);
+  setInterval(()=>{
+    x.fillStyle="rgba(0,0,0,.08)"; x.fillRect(0,0,c.width,c.height);
+    x.fillStyle="#00ff41"; x.font=fs+"px monospace";
+    drops.forEach((d,i)=>{ x.fillText(chars[Math.random()*chars.length|0],i*fs,d*fs);
+      if(d*fs>c.height && Math.random()>.975) drops[i]=0; drops[i]++; });
+  },55);
+})();
+
+/* =====================================================================
+   10) START
+   ===================================================================== */
+(async()=>{
+  await initMode();
+  document.getElementById("interval").value = localStorage.getItem("pakettracker_interval") ?? (MODE==="demo"?"1":"15");
+  if (MODE==="demo" && !shipments.length){
+    const now = Date.now();
+    [["00340434161094015902","dhl","Bürostuhl"],["H1001990012345678901","hermes","Kaffeebohnen Muster"],
+     ["TBA301234567890","amazon","Druckerpatronen"],["01505012345678","dpd","Regalboden Edelstahl"],
+     ["794612345678901","fedex","Ersatzteil USA"]].forEach(([n,c,l],i)=>
+      shipments.push({id:uid(),number:n,carrier:c,carrierAuto:false,label:l,addedAt:new Date(now-i*9*3600e3).toISOString()}));
+    save();
+  }
+  render(); setLive();
+  await refreshAll(); fitAll();
+})();
+</script>
+</body>
+</html>
