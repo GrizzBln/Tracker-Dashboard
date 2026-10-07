@@ -21,8 +21,9 @@
   h1 span{animation:blink 1s steps(1) infinite}
   @keyframes blink{50%{opacity:0}}
   header{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:12px;margin-bottom:14px}
-  .mode{border:1px solid var(--g3);padding:4px 10px;font-size:12px}
+  .mode{border:1px solid var(--g3);padding:4px 10px;font-size:12px;cursor:help}
   .mode.live{border-color:var(--g);box-shadow:0 0 8px var(--g)}
+  .mode.err{border-color:var(--err);color:var(--err)}
   .panel{background:var(--panel);border:1px solid var(--g3);padding:12px;margin-bottom:14px;box-shadow:0 0 12px rgba(0,255,65,.08)}
   input,select,button{background:#000;color:var(--g);border:1px solid var(--g3);font-family:inherit;font-size:14px;padding:8px 10px}
   input::placeholder{color:var(--g3)}
@@ -37,7 +38,8 @@
   .stat.active{border-style:solid;border-color:var(--g);box-shadow:0 0 6px var(--g)}
   #map{height:420px;border:1px solid var(--g3)}
   .leaflet-container{background:#000}
-  .leaflet-tile-pane{filter:sepia(1) hue-rotate(70deg) saturate(4) brightness(.75) contrast(1.1)}
+  /* OpenStreetMap-Kacheln (hell) -> Matrix-Grün auf Schwarz */
+  .leaflet-tile-pane{filter:invert(1) grayscale(1) brightness(.75) contrast(1.3) sepia(1) hue-rotate(70deg) saturate(5)}
   .leaflet-popup-content-wrapper,.leaflet-popup-tip{background:#000;color:var(--g);border:1px solid var(--g);font-family:inherit}
   .leaflet-control-attribution{background:rgba(0,0,0,.7)!important;color:var(--g3)!important}
   .leaflet-control-attribution a{color:var(--g2)!important}
@@ -87,7 +89,7 @@
   summary{cursor:pointer}
   pre{white-space:pre-wrap;word-break:break-all;font-size:11px;color:var(--g2);max-height:350px;overflow:auto;border:1px solid var(--dim);padding:8px}
   .toast{position:fixed;bottom:18px;right:18px;z-index:2000;display:flex;flex-direction:column;gap:8px}
-  .toast div{background:#000;border:1px solid var(--g);padding:10px 14px;box-shadow:0 0 12px var(--g);max-width:340px}
+  .toast div{background:#000;border:1px solid var(--g);padding:10px 14px;box-shadow:0 0 12px var(--g);max-width:420px;white-space:pre-line}
   .two{display:grid;grid-template-columns:1fr 1fr;gap:16px}
   @media(max-width:800px){.two{grid-template-columns:1fr}}
 </style>
@@ -164,13 +166,21 @@
 /* =====================================================================
    0) API-ENDPUNKT
    Reihenfolge: Einstellung im Browser (⚙ API) > config.js > gleiche Domain (lokaler server.js)
-   Auf GitHub Pages ohne Proxy-URL läuft automatisch der DEMO-Modus.
    ===================================================================== */
-const onGithubPages = location.hostname.endsWith("github.io") || location.protocol === "file:";
+const onStaticHost = location.hostname.endsWith("github.io") || location.protocol === "file:";
+
+// Bereinigt eingegebene Adressen: ergänzt https://, entfernt Leerzeichen, Pfade und / am Ende
+function normalizeBase(v){
+  v = String(v || "").trim();
+  if (!v) return "";
+  if (!/^https?:\/\//i.test(v)) v = "https://" + v;
+  try { const u = new URL(v); return u.origin; } catch { return v.replace(/\/+$/,""); }
+}
 function apiBase(){
-  const v = localStorage.getItem("pakettracker_api") ?? (window.TRACKER_CONFIG?.API_BASE || "");
-  if (v) return v.replace(/\/+$/,"");
-  return onGithubPages ? null : "";   // "" = gleiche Domain, null = kein Backend
+  const stored = localStorage.getItem("pakettracker_api");
+  const v = normalizeBase(stored !== null && stored !== "" ? stored : (window.TRACKER_CONFIG?.API_BASE || ""));
+  if (v) return v;
+  return onStaticHost ? null : "";   // "" = gleiche Domain (server.js), null = kein Backend
 }
 
 /* =====================================================================
@@ -245,35 +255,70 @@ function etaOf(s){
 const LS = "pakettracker_v1", LSGEO = "pakettracker_geo";
 let shipments = JSON.parse(localStorage.getItem(LS) || "[]");
 let geoCache  = JSON.parse(localStorage.getItem(LSGEO) || "{}");
-let MODE = "demo", statusFilter = "", timer = null;
+let MODE = "demo", MODE_INFO = "", statusFilter = "", timer = null;
 const save = () => localStorage.setItem(LS, JSON.stringify(shipments));
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const fmt = d => d ? new Date(d).toLocaleString("de-DE",{weekday:"short",day:"2-digit",month:"2-digit",year:"numeric",hour:"2-digit",minute:"2-digit"}) : "–";
 const fmtDay = d => d ? new Date(d).toLocaleDateString("de-DE",{weekday:"long",day:"2-digit",month:"2-digit"}) : "–";
 function ago(d){ if(!d) return "–"; const m=Math.round((Date.now()-new Date(d))/60000);
   if(m<1) return "gerade eben"; if(m<60) return `vor ${m} Min`; const h=Math.round(m/60); if(h<24) return `vor ${h} Std`; return `vor ${Math.round(h/24)} Tg`; }
-function toast(msg){ const t=document.createElement("div"); t.textContent="> "+msg; document.getElementById("toast").appendChild(t); setTimeout(()=>t.remove(),6000); }
+function toast(msg, ms=8000){ const t=document.createElement("div"); t.textContent="> "+msg; document.getElementById("toast").appendChild(t); setTimeout(()=>t.remove(),ms); }
 const uid = () => (crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36)+Math.random().toString(36).slice(2));
 
 /* =====================================================================
-   4) DATENABRUF
+   4) VERBINDUNGSTEST mit genauer Fehlerdiagnose
    ===================================================================== */
-async function initMode(){
-  const base = apiBase();
-  MODE = "demo";
-  if (base !== null){
-    try{ const r = await fetch(base + "/api/config"); MODE = (await r.json()).mode || "demo"; }
-    catch { if (base) toast("API-Proxy nicht erreichbar – Demo-Modus aktiv."); }
+async function testApi(base){
+  let r, text;
+  try { r = await fetch(base + "/api/config", { cache:"no-store" }); }
+  catch {
+    return { ok:false, msg:
+      "Keine Verbindung zum Worker.\n" +
+      "Mögliche Ursachen:\n" +
+      "• Adresse falsch (soll sein: https://NAME.KONTO.workers.dev)\n" +
+      "• Worker noch nicht deployt\n" +
+      "• ALLOWED_ORIGIN passt nicht zu " + location.origin };
   }
-  const el = document.getElementById("mode");
-  el.textContent = MODE === "live" ? "● LIVE (Ship24)" : "○ DEMO-MODUS";
-  el.classList.toggle("live", MODE === "live");
+  try { text = await r.text(); } catch { text = ""; }
+  let j = null; try { j = JSON.parse(text); } catch {}
+  if (!j) return { ok:false, msg:
+    "Worker antwortet, aber nicht mit dem Tracker-Code" +
+    (/hello world/i.test(text) ? " (noch „Hello World“)" : "") +
+    ".\n→ In Cloudflare „Edit code“, Inhalt von worker/worker.js einfügen, „Deploy“." };
+  if (r.status === 403) return { ok:false, msg:
+    "Worker blockiert diese Website.\n" + (j.error || "") +
+    "\n→ ALLOWED_ORIGIN muss genau lauten: " + location.origin };
+  if (!r.ok) return { ok:false, msg:"Worker-Fehler (HTTP " + r.status + "): " + (j.error || "") };
+  if (j.mode !== "live") return { ok:false, msg:
+    "Worker erreichbar, aber SHIP24_API_KEY fehlt.\n→ In Cloudflare unter Settings → Variables and Secrets als „Secret“ anlegen und deployen." };
+  return { ok:true, msg:"Verbindung OK – LIVE-Modus aktiv." };
 }
 
+async function initMode(showResult){
+  const base = apiBase();
+  MODE = "demo"; MODE_INFO = "Kein Worker eingetragen – Demo-Modus.";
+  let fail = false;
+  if (base !== null){
+    const res = await testApi(base);
+    MODE_INFO = res.msg;
+    if (res.ok) MODE = "live"; else fail = !!base || location.protocol !== "file:";
+    if (showResult || (!res.ok && base)) toast(res.msg, 15000);
+  } else if (showResult) toast(MODE_INFO);
+  const el = document.getElementById("mode");
+  el.textContent = MODE === "live" ? "● LIVE (Ship24)" : (fail ? "✕ DEMO – Verbindungsfehler" : "○ DEMO-MODUS");
+  el.title = MODE_INFO;
+  el.classList.toggle("live", MODE === "live");
+  el.classList.toggle("err", MODE !== "live" && fail);
+}
+document.getElementById("mode").onclick = ()=>toast(MODE_INFO, 15000);
+
+/* =====================================================================
+   5) DATENABRUF
+   ===================================================================== */
 async function fetchTracking(s){
   if (MODE === "demo") return demoTracking(s);
   const r = await fetch(apiBase() + "/api/track",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({trackingNumber:s.number})});
-  const j = await r.json();
+  const j = await r.json().catch(()=>({error:"Ungültige Antwort vom Worker"}));
   if (!r.ok) throw new Error(j.error || "Abruf fehlgeschlagen");
   await geocodeEvents(j.events);
   return j;
@@ -306,7 +351,7 @@ async function refresh(s, silent){
 // Zugestellte Sendungen im Live-Modus nicht mehr abfragen (schont das kostenlose Kontingent)
 async function refreshAll(){
   for (const s of shipments){
-    if (MODE === "live" && s.data?.milestone === "delivered") continue;
+    if (MODE === "live" && s.data?.milestone === "delivered" && !s.data?.raw?.hinweis) continue;
     await refresh(s, true);
   }
 }
@@ -360,12 +405,12 @@ function demoTracking(s){
 }
 
 /* =====================================================================
-   5) KARTE
+   6) KARTE  – OpenStreetMap-Standardkacheln (kein API-Key nötig)
    ===================================================================== */
-const TILE = "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png";
-const ATTR = '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/">CARTO</a>';
+const TILE = "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
+const ATTR = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>-Mitwirkende';
 const map = L.map("map",{zoomControl:true}).setView([51.2,10.4],6);
-L.tileLayer(TILE,{attribution:ATTR,maxZoom:18}).addTo(map);
+L.tileLayer(TILE,{attribution:ATTR,maxZoom:19}).addTo(map);
 const layer = L.layerGroup().addTo(map);
 const lastPos = s => s.data?.events?.find(e=>e.lat!=null);
 const pinIcon = s => L.divIcon({className:"",html:`<div class="pin ${ms(s).cls} ${["in_transit","out_for_delivery"].includes(s.data?.milestone)?"live":""}"></div>`,iconSize:[16,16],iconAnchor:[8,8]});
@@ -375,7 +420,7 @@ function drawMap(list){
   list.forEach(s=>{
     const p = lastPos(s); if(!p) return;
     const route = s.data.events.filter(e=>e.lat!=null).map(e=>[e.lat,e.lon]).reverse();
-    if (route.length>1) L.polyline(route,{color:"#00ff41",weight:2,opacity:.45,dashArray:"4 6"}).addTo(layer);
+    if (route.length>1) L.polyline(route,{color:"#00ff41",weight:2,opacity:.6,dashArray:"4 6"}).addTo(layer);
     L.marker([p.lat,p.lon],{icon:pinIcon(s)}).addTo(layer)
       .bindPopup(`<b>${esc(CARRIERS[s.carrier]?.name)} · ${esc(s.label||s.number)}</b><br>${esc(ms(s).de)}<br>${esc(p.location)}<br><small>${fmt(p.time)}</small><br><a href="#" onclick="openDetail('${s.id}');return false">Details »</a>`);
   });
@@ -393,7 +438,7 @@ function focusOnMap(id){
 }
 
 /* =====================================================================
-   6) DARSTELLUNG
+   7) DARSTELLUNG
    ===================================================================== */
 function filtered(){
   const q = document.getElementById("search").value.toLowerCase();
@@ -474,7 +519,7 @@ function render(){
 }
 
 /* =====================================================================
-   7) DETAILANSICHT
+   8) DETAILANSICHT
    ===================================================================== */
 let dmap = null;
 function openDetail(id){
@@ -509,7 +554,7 @@ function openDetail(id){
   setTimeout(()=>{
     if (dmap) dmap.remove();
     dmap = L.map("dmap").setView([51.2,10.4],6);
-    L.tileLayer(TILE,{attribution:ATTR}).addTo(dmap);
+    L.tileLayer(TILE,{attribution:ATTR,maxZoom:19}).addTo(dmap);
     const pts = evs.filter(e=>e.lat!=null).reverse();
     if (pts.length){
       L.polyline(pts.map(e=>[e.lat,e.lon]),{color:"#00ff41",weight:3}).addTo(dmap);
@@ -524,7 +569,7 @@ document.getElementById("modal").onclick = e=>{ if(e.target.id==="modal") e.curr
 document.addEventListener("keydown",e=>{ if(e.key==="Escape") document.getElementById("modal").classList.remove("open"); });
 
 /* =====================================================================
-   8) AKTIONEN
+   9) AKTIONEN
    ===================================================================== */
 const sel = document.getElementById("inCarrier");
 sel.innerHTML = `<option value="auto">Versender: automatisch</option>` + Object.entries(CARRIERS).map(([k,c])=>`<option value="${k}">${c.name}</option>`).join("");
@@ -543,11 +588,19 @@ document.getElementById("addForm").onsubmit = e=>{
   refresh(s);
 };
 document.getElementById("settingsBtn").onclick = async ()=>{
-  const cur = localStorage.getItem("pakettracker_api") ?? (window.TRACKER_CONFIG?.API_BASE || "");
-  const v = prompt("URL deines API-Proxys (z. B. https://paket-tracker.DEINNAME.workers.dev)\nLeer lassen = Demo-Modus:", cur);
+  const cur = localStorage.getItem("pakettracker_api") || window.TRACKER_CONFIG?.API_BASE || "";
+  const v = prompt("Adresse deines Cloudflare-Workers, z. B.\nhttps://paket-tracker.DEINKONTO.workers.dev\n\nLeer lassen = Wert aus config.js bzw. Demo-Modus.", cur);
   if (v === null) return;
-  localStorage.setItem("pakettracker_api", v.trim());
-  await initMode(); refreshAll();
+  const n = normalizeBase(v);
+  if (n) localStorage.setItem("pakettracker_api", n); else localStorage.removeItem("pakettracker_api");
+  await initMode(true);
+  if (MODE === "live"){
+    // Demo-Beispiele entfernen, damit sie kein Kontingent verbrauchen
+    const before = shipments.length;
+    shipments = shipments.filter(s=>!s.demo); save();
+    if (before !== shipments.length) toast("Demo-Beispielsendungen entfernt.");
+  }
+  render(); refreshAll();
 };
 window.refreshOne = id=>{ const s=shipments.find(x=>x.id===id); if(s) refresh(s); };
 window.removeOne  = id=>{ if(!confirm("Sendung entfernen?")) return; shipments=shipments.filter(x=>x.id!==id); save(); render(); };
@@ -559,7 +612,7 @@ document.getElementById("interval").onchange = setLive;
 setInterval(()=>document.getElementById("clock").textContent = new Date().toLocaleString("de-DE"),1000);
 
 /* =====================================================================
-   9) MATRIX-REGEN
+   10) MATRIX-REGEN
    ===================================================================== */
 (()=>{
   const c=document.getElementById("rain"), x=c.getContext("2d");
@@ -576,19 +629,20 @@ setInterval(()=>document.getElementById("clock").textContent = new Date().toLoca
 })();
 
 /* =====================================================================
-   10) START
+   11) START
    ===================================================================== */
 (async()=>{
-  await initMode();
+  await initMode(false);
   document.getElementById("interval").value = localStorage.getItem("pakettracker_interval") ?? (MODE==="demo"?"1":"15");
   if (MODE==="demo" && !shipments.length){
     const now = Date.now();
     [["00340434161094015902","dhl","Bürostuhl"],["H1001990012345678901","hermes","Kaffeebohnen Muster"],
      ["TBA301234567890","amazon","Druckerpatronen"],["01505012345678","dpd","Regalboden Edelstahl"],
      ["794612345678901","fedex","Ersatzteil USA"]].forEach(([n,c,l],i)=>
-      shipments.push({id:uid(),number:n,carrier:c,carrierAuto:false,label:l,addedAt:new Date(now-i*9*3600e3).toISOString()}));
+      shipments.push({id:uid(),number:n,carrier:c,carrierAuto:false,label:l,demo:true,addedAt:new Date(now-i*9*3600e3).toISOString()}));
     save();
   }
+  if (MODE==="live"){ shipments = shipments.filter(s=>!s.demo); save(); }
   render(); setLive();
   await refreshAll(); fitAll();
 })();
